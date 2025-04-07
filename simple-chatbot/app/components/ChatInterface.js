@@ -1,89 +1,117 @@
 "use client";
 import { useState } from "react";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import dynamic from "next/dynamic";
 
-// Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
-  dangerouslyAllowBrowser: true,
+const FileUpload = dynamic(() => import("./FileUpload"), {
+  ssr: false,
 });
 
-export default function ChatInterface({ messages, setMessages, setChatHistory }) {
+const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY);
+
+export default function ChatInterface({ messages, setMessages }) {
   const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [fileData, setFileData] = useState(null);
 
-  async function sendMessage() {
-    if (!input.trim()) return;
+  async function sendMessage(messageText) {
+    if (!messageText.trim() && !fileData) return;
 
-    const userMessage = { text: input, sender: "user" };
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    const composedText = fileData
+      ? `${messageText}\n\n📎 ${fileData.name}\n\n${fileData.text}`
+      : messageText;
+
+    const userMessage = {
+      text: fileData ? `📎 ${fileData.name}\n\n${messageText}` : messageText,
+      sender: "user",
+    };
+
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
     setInput("");
+    setFileData(null);
+    setLoading(true);
 
     try {
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: userMessage.text }],
-      });
-
-      const botReply = { text: response.choices[0].message.content, sender: "bot" };
-      setMessages((prevMessages) => [...prevMessages, botReply]);
-
-      setChatHistory((prevHistory) => [
-        ...prevHistory,
-        { conversation: [...messages, userMessage, botReply] },
-      ]);
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+      const result = await model.generateContent(composedText);
+      const response = await result.response;
+      const botReply = {
+        text: response.text(),
+        sender: "bot",
+      };
+      setMessages([...newMessages, botReply]);
     } catch (error) {
       console.error("Error:", error);
-      if (error.response?.status === 429) {
-        alert("OpenAI API quota exceeded. Please check your billing details.");
-      }
+      alert("Something went wrong.");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div className="w-[750px] ml-[150px] flex flex-col bg-white shadow-lg">
-      {/* Top Header */}
-      <div className="bg-black text-white flex items-center p-4">
-        <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center mr-3">
-          <span className="text-blue-600 text-lg font-bold">🤖</span>
+    <div className="w-full flex flex-col bg-gray-100 shadow-lg">
+      {/* Header */}
+      <div className="bg-gray-200 text-white flex items-center p-4">
+        <div className="w-10 h-10 bg-black rounded-full flex items-center justify-center mr-3">
+          <span className="text-black text-lg font-bold">🤖</span>
         </div>
         <div>
-          <h2 className="text-lg font-bold">ChatBot</h2>
-          <p className="text-sm opacity-80">🟢 Online</p>
+          <h2 className="text-lg text-black font-bold">ChatBot</h2>
+          <p className="text-sm text-black opacity-80">🟢 Online</p>
         </div>
-        
       </div>
 
-      {/* Chat Messages */}
+      {/* Chat */}
       <div className="flex-grow overflow-y-auto p-4 h-[70vh] custom-scrollbar">
         {messages.length === 0 ? (
           <p className="text-gray-500 text-center">Start a conversation...</p>
         ) : (
           messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              key={i}
+              className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+            >
               <div
-                className={`p-3 m-2 max-w-[75%] rounded-xl text-black ${
-                  msg.sender === "user" ? "bg-gray-200 text-black" : "bg-neutral-600"
-                }`}
+                className={`p-3 m-2 rounded-xl break-words whitespace-pre-wrap text-black ${
+                  msg.sender === "user"
+                    ? "bg-gray-200 text-black"
+                    : "bg-neutral-600 text-white"
+                } max-w-[75%] w-fit`}
               >
                 <p>{msg.text}</p>
-                <div className="text-xs opacity-80 mt-1 flex justify-between">
-                  {msg.sender === "user" }
-                </div>
               </div>
             </div>
           ))
         )}
+
+        {loading && (
+          <div className="flex justify-start">
+            <div className="p-3 m-2 rounded-xl bg-neutral-600 text-white">
+              <p>🤖 Thinking...</p>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Input Box */}
-      <div className="p-4 border-t bg-white flex">
+      {/* Input & Upload */}
+      <div className="p-4 border-t bg-white gap-3 flex items-center">
         <input
-          className="flex-grow p-2 border rounded-lg"
+          className="flex w-[1000px] p-2 border rounded-lg"
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sendMessage(input)}
           placeholder="Type your message here..."
         />
-        <button className="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg" onClick={sendMessage}>
+        <FileUpload
+          onFileSelect={(file) => setFileData(file)}
+          fileData={fileData}
+          onRemoveFile={() => setFileData(null)}
+        />
+        <button
+          className="px-4 py-2 bg-black text-white rounded-lg"
+          onClick={() => sendMessage(input)}
+        >
           Send
         </button>
       </div>
